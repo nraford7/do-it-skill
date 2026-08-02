@@ -39,7 +39,7 @@ cp -R do-it ~/.claude/skills/do-it
 
 Then trigger it with `/do-it <instruction>` (or "just build it", "do it end-to-end").
 
-> The skill references companion tooling from my setup ([superpowers](https://github.com/obra/superpowers) skills, a `fresheyes` second-model reviewer, and an Agency execution layer). It degrades gracefully without them, but the review loops assume an independent reviewer is available.
+> The skill references companion tooling from my setup ([superpowers](https://github.com/obra/superpowers) skills, a `fresheyes` second-model reviewer, and an [Agency](https://github.com/agentbureau/agency) execution layer). It degrades gracefully without them, but the review loops assume an independent reviewer is available.
 
 ## License
 
