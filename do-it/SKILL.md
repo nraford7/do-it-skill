@@ -150,7 +150,7 @@ Escalation reuses the artifacts already on disk, so a step up costs only the add
 
 ## The Three Rungs (set by the Start-Floor Evaluator, climbed on evidence)
 
-Review depth is a single dial with three rungs. Every run starts at its floor (light unless the evaluator floored it higher) and climbs one rung whenever a review pass leaves a real problem unfixed. It never climbs down. **All Mandatory Artifacts apply at every rung** — the rung trims passes, never discipline.
+Review depth is a single dial with three rungs. Every run starts at its floor (light unless the evaluator floored it higher) and climbs one rung whenever a review pass leaves a real problem unfixed. It never climbs down. **All Mandatory Artifacts apply at every rung** — the rung trims passes, never discipline. The evaluator sets the starting rung: ordinary work starts at light; a "don't break X"/"byte-identical" constraint or FAILURE COST = 2 (data loss, outage, or money) floors the start at medium; a hard trigger (security, destructive migration, external contract change, prod config, or an explicit request for thoroughness) floors it at heavy.
 
 **Basis:** the 2026-07-03 quadrant experiment (`~/Experiments/quadrant-test-2026-07-03/REPORT.md`) — on a moderate task, a single-pass pipeline with Agency execution scored 93/120 (blinded judges) vs the full loop's 98/120, at ~21% of the cost and ~20% of the wall clock, with identical held-out conformance (26/26 both). The loop's premium is real but narrow: it buys defect classes that only matter when silent wrongness is expensive. Light spends nothing on it; heavy spends it in full; medium buys the one thing that closes most of the gap — a single independent look.
 
@@ -237,7 +237,7 @@ Review runs at **chunk boundaries, not per task** — that is this skill's revie
 
 At heavy, wrap this stage in the **review loop** — same diminishing-returns judge, 10-pass cap, and two-clean-pass early exit (see Review Loop § Pass caps). At light and medium there is no loop: one round, then advance or escalate.
 
-Only when both stages return clean does the chunk move to commit.
+Only when the stage(s) the current rung requires return clean does the chunk move to commit — Stage 1 alone at light, both stages at medium and heavy.
 
 ---
 
