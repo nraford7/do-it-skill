@@ -22,20 +22,20 @@ The loop has one job: deliver working code that passes review without burning to
 ```
 [0] Clarify (only if blocking)
       ↓
-[1] Spec draft  ─→  REVIEW-TIER EVALUATOR (LIGHT/STANDARD/HEAVY + MODE: FAST|FULL)
-      ↓                          ↓ (tier selects reviewer stacks; mode selects the pipeline shape)
-    spec        ─→  review-loop  ─→  (split? recurse) ─→  ✓     [FAST: one review pass, no loop]
+[1] Spec draft  ─→  START-FLOOR EVALUATOR (light | medium | heavy start)
+      ↓                          ↓ (floor = light unless risk floors it higher; climbs on evidence)
+    spec        ─→  review       ─→  (escalate? / split?) ─→  ✓     [light/medium: one pass, no loop]
       ↓
-[2] Plan        ─→  review-loop  ─→  (split? recurse) ─→  ✓     [FAST: one review pass, no loop]
+[2] Plan        ─→  review       ─→  (escalate? / split?) ─→  ✓     [light/medium: one pass, no loop]
       ↓
-[3] Agency execution  (no permission asks — both modes, unchanged)
+[3] Agency execution  (no permission asks — all rungs, unchanged)
       ↓
-[4] Post-build review (FULL: Stage 1 ∥ Stage 2 loop · FAST: one Stage-1 pass)
+[4] Post-build review (heavy: Stage 1 ∥ Stage 2 loop · light: one Stage-1 pass · medium: one Stage 1 ∥ Stage 2 round)
       ↓
-[5] Verification gate → Commit + push   (both modes, unchanged)
+[5] Verification gate → Commit + push   (all rungs, unchanged)
 ```
 
-Every FULL-mode fresheyes loop has a **Claude diminishing-returns judge** sitting on top deciding CONTINUE / STOP / SPLIT after each pass. FAST mode has no loops and no judge — see Pipeline Modes.
+Only the **heavy** rung loops; it has a Claude diminishing-returns judge on top deciding CONTINUE / STOP / SPLIT after each pass. **light** and **medium** do not loop — light is one same-model pass, medium is one independent-model pass. See The Three Rungs.
 
 ---
 
@@ -80,7 +80,7 @@ Contents (keep it terse — this is a ledger, not prose):
 # Run: <slug>
 Instruction: <the user's original /do-it instruction, verbatim>
 Stage: <clarify | spec | spec-review | plan | plan-review | executing | code-review:<chunk> | verifying | committing | done>
-Tier: <LIGHT | STANDARD | HEAVY> (<rubric scores or hard trigger>) <+ escalations with cause, if any>
+Rung: <light | medium | heavy> (start-floor <light | medium | heavy>: <hard-trigger | FC=2 | constraint-lens | default>) <+ escalations with cause, if any>
 Spec: docs/superpowers/specs/...   Plan: docs/superpowers/plans/...
 Agency project: <id or —>
 
@@ -124,41 +124,51 @@ docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md
 
 The spec must include: problem statement, success criteria (measurable), proposed approach, alternatives considered with why-not, blast radius / rollback plan, and any open questions.
 
-**Once the spec draft exists, run the Review-Tier Evaluator (next section) — its verdict selects the reviewer stack AND the pipeline mode for this run.** Then enter the **spec review loop** (see Review Loop section below) — **or, in FAST mode, the single spec-review pass (see Pipeline Modes)**.
+**Once the spec draft exists, run the Start-Floor Evaluator (next section) — its verdict sets the run's starting rung (`light` unless risk floors it higher).** Then run the review for the current rung (see The Three Rungs) — one pass at light/medium, or the spec review loop at heavy.
 
 ---
 
-## Review-Tier Evaluator (runs ONCE, after the spec draft)
+## Start-Floor Evaluator (runs ONCE, after the spec draft)
 
-Not every task earns multiple codex passes. A one-file bugfix reviewed by three independent codex runs is ritual, not rigor — but the decision to go light must never belong to the executor, whose incentive is always to go light. So the tier is set by a **fresh subagent applying a fixed rubric**, recorded in the run manifest, and only ever escalated afterward, never lowered.
+Not every task earns an independent-model pass, let alone a full loop — but the decision to stay light must never belong to the executor, whose incentive is always to go light. So the STARTING rung is set by a **fresh subagent applying a fixed rubric**, recorded in the run manifest, and from there only ever climbs on evidence, never drops.
 
 **Procedure:** dispatch one `general-purpose` subagent with the user's instruction, the spec draft, and the prompt in `references/evaluator-rubric.md` (read that file; use the prompt verbatim).
 
-**Record the full verdict line in the run manifest** (`Tier: STANDARD · Mode: FAST (BR1 REV1 NOV0 INT1 FC1 = 4, no hard trigger)`). The tier selects the reviewer stack in Reviewer Selection below; the mode selects the pipeline shape (see Pipeline Modes).
+**Record the verdict line in the run manifest** (`Rung: light (start-floor light: default, BR1 REV1 NOV0 INT1 FC1 = 4)`). The floor sets where the run STARTS; The Three Rungs defines what each rung runs; escalation (below) defines how it climbs.
 
-**If the evaluator emits a `Lens:`** (constraint phrasing like "byte-identical" / "don't break X" from the instruction), record it in the manifest and include it verbatim as a mandatory review focus in EVERY review pass's prompt, both modes, all stages. The lens is how constraints get enforced without inflating the tier.
+**If the evaluator emits a `Lens:`** (constraint phrasing like "byte-identical" / "don't break X"), record it in the manifest and include it verbatim as a mandatory review focus in EVERY review pass's prompt, every rung, all stages. The lens is how constraints get enforced at any rung.
 
-**Escalation (one-way ratchet, tier AND mode):** bump the tier one level — and promote FAST → FULL — for all remaining stages if any of these occur mid-run: a hard trigger surfaces that the spec didn't reveal, any judge verdict of `SPLIT`, a NEW-CATEGORY BLOCKER at pass 3+, an Agency task failing its evaluator twice, or (FAST mode) any BLOCKER finding in a single-pass review. Promotion enters the FULL machinery from the current stage forward — artifacts already exist, so it costs only the additional passes. Log the escalation + cause in the manifest. Neither tier nor mode EVER goes down mid-run, and the executor may not overrule the evaluator downward for any reason — that is the same skip-temptation the Mandatory Artifacts rules exist to block. The user can override in either direction in the original instruction ("go light on this" / "full review").
+**Escalation (one-way ratchet, mechanical):** the rung climbs exactly one step, for all remaining stages, whenever any of these occur mid-run:
+- a review pass leaves an impact-YES BLOCKER or SUBSTANTIVE finding unfixed after that rung's pass(es) — light→medium, medium→heavy;
+- a judge verdict of `SPLIT` (heavy only) → Splitting;
+- a hard trigger surfaces that the spec didn't reveal → jump straight to heavy;
+- an Agency task fails its evaluator twice → re-plan (Step 3) and bump the rung one step.
+
+Escalation reuses the artifacts already on disk, so a step up costs only the additional passes, never a restart. The rung NEVER drops, and the executor may not overrule it downward for any reason — that is the same skip-temptation the Mandatory Artifacts rules exist to block. Escalation is driven by the finding severities the scorecard already prints, NOT by executor judgment. Log every escalation + cause in the manifest. The user can override in either direction in the original instruction ("go light on this" / "full review").
 
 ---
 
-## Pipeline Modes (set by the evaluator, empirically calibrated)
+## The Three Rungs (set by the Start-Floor Evaluator, climbed on evidence)
 
-**Basis:** the 2026-07-03 quadrant experiment (`~/Experiments/quadrant-test-2026-07-03/REPORT.md`) — on a STANDARD-tier task, a single-pass pipeline with Agency execution scored 93/120 (blinded judges) vs the full loop machinery's 98/120, at ~21% of the cost and ~20% of the wall clock, with identical held-out conformance (26/26 both). The loops' premium is real but narrow: they buy defect classes that only matter when silent wrongness is expensive. FULL mode is reserved for exactly those surfaces.
+Review depth is a single dial with three rungs. Every run starts at its floor (light unless the evaluator floored it higher) and climbs one rung whenever a review pass leaves a real problem unfixed. It never climbs down. **All Mandatory Artifacts apply at every rung** — the rung trims passes, never discipline. The evaluator sets the starting rung: ordinary work starts at light; a "don't break X"/"byte-identical" constraint or FAILURE COST = 2 (data loss, outage, or money) floors the start at medium; a hard trigger (security, destructive migration, external contract change, prod config, or an explicit request for thoroughness) floors it at heavy.
 
-**FULL mode** — the pipeline as specified in the rest of this skill, unchanged: review loops with floors, diminishing-returns judge, fresheyes per Reviewer Selection, Stage 1 ∥ Stage 2 code review loops.
+**Basis:** the 2026-07-03 quadrant experiment (`~/Experiments/quadrant-test-2026-07-03/REPORT.md`) — on a moderate task, a single-pass pipeline with Agency execution scored 93/120 (blinded judges) vs the full loop's 98/120, at ~21% of the cost and ~20% of the wall clock, with identical held-out conformance (26/26 both). The loop's premium is real but narrow: it buys defect classes that only matter when silent wrongness is expensive. Light spends nothing on it; heavy spends it in full; medium buys the one thing that closes most of the gap — a single independent look.
 
-**FAST mode** — same skeleton, single-pass reviews, empirically ~1/5 the cost:
+**light** — one same-model (`general-purpose` subagent) pass per artifact. No independent model, no loop, no judge. Fast (minutes). The default start.
+- Spec/plan: one subagent pass (correctness/completeness lens). Clean → advance.
+- Code: one Stage-1 pass (`superpowers:requesting-code-review`) + the verification gate. Clean → commit.
+- A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to medium. Light NEVER loops — it advances clean or escalates.
 
-1. **All Mandatory Artifacts still apply** — spec, plan, manifest, all written, all committed. FAST trims passes, never discipline. The manifest's resume value alone justifies it (proven three times in one afternoon during the experiment).
-2. **Spec review: ONE pass** by a fresh `general-purpose` subagent (correctness/completeness lens). Fix impact-YES findings; advance. No fresheyes, no floor, no judge.
-3. **Plan review: ONE pass**, same shape (implementability lens).
-4. **Agency execution: unchanged.** Same project mirroring, per-task evaluators, fail-twice → re-plan rule.
-5. **Post-build review: ONE Stage-1 pass** (`superpowers:requesting-code-review`) on the chunk diff + the verification gate. No Stage-2 fresheyes, no loop.
-6. **Scorecards still print** for every pass (judge column reads `n/a-fast`). The audit trail survives the mode.
-7. **Escalation:** any BLOCKER in any FAST pass promotes the run to FULL from that stage forward (one-way; log cause in manifest).
+**medium** — one INDEPENDENT-model (`superpowers:fresheyes`) pass per artifact. No loop, no judge. Buys blind-spot coverage once (~5–15 min for the one codex pass, watchdog-capped).
+- Spec/plan: one fresheyes pass (Fresheyes Watchdog Protocol applies). Clean → advance.
+- Code: Stage 1 ∥ Stage 2 (fresheyes), ONE round in parallel (see Step 4). Clean → commit.
+- Scorecard prints for the pass (judge column `n/a-medium`). A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to heavy. Medium NEVER loops — one independent look, then advance or escalate.
 
-The Review Loop, Pass Caps, and Diminishing-Returns Judge sections below apply to FULL mode only.
+**heavy** — the full review loop: fresheyes on passes 1–2, lens-rotated subagents 3+, 3-pass floor, diminishing-returns judge from pass 3, 10-pass cap, Stage 1 ∥ Stage 2 every code pass (see The Review Loop, Pass caps, and the Diminishing-Returns Judge below).
+- Two-clean-pass early exit applies — UNLESS the run was floored at heavy by a hard trigger (security, destructive migration, explicit thoroughness), in which case there is NO early exit and the full 3-pass floor always runs.
+- A judge `SPLIT` goes to Splitting.
+
+The Review Loop, Pass caps, and Diminishing-Returns Judge sections below apply to the **heavy rung only**.
 
 ---
 
@@ -183,13 +193,13 @@ For SMALL tasks (single-file edit, brief investigation, parameter change): write
 
 For LARGE tasks (multi-system, schema migration, refactor): write a full plan — typically 200-1000 lines — with chunked structure, dependency ordering, per-chunk acceptance criteria.
 
-Then enter the **plan review loop** (minimum 2 passes even on short plans; floor, early exit, and reviewer selection per Review Loop § Pass caps and § Reviewer Selection). **In FAST mode: one subagent pass instead (see Pipeline Modes) — the loop, floor, and judge do not apply.**
+Then run the plan review for the current rung (see The Three Rungs): one subagent pass at light, one fresheyes pass at medium, or the plan review loop at heavy (minimum 2 passes; floor, early exit, and reviewer selection per Review Loop § Pass caps and § Reviewer Selection).
 
 **Self-check before advancing to Step 3:**
 - [ ] Plan file exists at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`
-- [ ] Plan has gone through the review passes its mode+tier requires (FAST: one subagent pass, findings fixed; FULL: see Reviewer Selection)
-- [ ] FULL mode only: diminishing-returns judge emitted STOP at pass 3+ OR the tier's clean-pass exit fired (LIGHT: one clean pass; STANDARD: two clean passes; HEAVY: no early exit)
-- [ ] Scorecard line was printed for every plan-review pass (both modes)
+- [ ] Plan has gone through the review its rung requires (light: one subagent pass, findings fixed; medium: one fresheyes pass; heavy: see Reviewer Selection)
+- [ ] heavy only: diminishing-returns judge emitted STOP at pass 3+ OR the two-clean-pass early exit fired (never on hard-trigger-floored heavy)
+- [ ] Scorecard line was printed for every plan-review pass (all rungs)
 - [ ] Run manifest updated (stage = plan-approved)
 
 If any checkbox is unchecked, DO NOT advance. Either complete it or surface to user.
@@ -217,7 +227,7 @@ If a task fails the Agency evaluator twice with the same root cause, **stop and 
 
 Review runs at **chunk boundaries, not per task** — that is this skill's review policy. After all tasks in a chunk are Agency-evaluator-clean, run the **two-stage review on the chunk's combined diff**.
 
-**In FAST mode: one Stage-1 pass + verification gate, then commit (see Pipeline Modes; a BLOCKER promotes to FULL).** In FULL mode — on the LIGHT tier, run Stage 1 only, no fresheyes (see Reviewer Selection; a BLOCKER escalates the tier and brings Stage 2 in). On STANDARD and HEAVY:
+**At light: one Stage-1 pass + verification gate, then commit (a surviving BLOCKER/SUBSTANTIVE escalates to medium). At medium: one Stage 1 ∥ Stage 2 round in parallel, then commit if clean (a surviving BLOCKER/SUBSTANTIVE escalates to heavy).** At heavy:
 
 **Stages 1 and 2 are independent by design (no shared context) — launch them IN PARALLEL, not sequentially.** Fresheyes takes 5–15 min; Stage 1 rides inside that window for free. Dispatch the Stage 1 subagent and the watchdogged fresheyes in the same round, then collect both.
 
@@ -225,9 +235,9 @@ Review runs at **chunk boundaries, not per task** — that is this skill's revie
 2. **Stage 2** — `superpowers:fresheyes` for independent cross-validation (different model, no shared context). Model and effort come from `settings.json` env (`FRESHEYES_MODEL`, `FRESHEYES_REASONING`) — never pass or hardcode a model in the call. **Run it through `scripts/watchdog.sh` per the Fresheyes Watchdog Protocol below — never a bare call that could hang.** If fresheyes stalls twice, the protocol's fallback applies: a fresh `general-purpose` subagent with no shared context, or `code-review:code-review` on PRs.
 3. Once both stages return, apply the combined findings via `superpowers:receiving-code-review` (technical rigor, no performative agreement). Re-run both stages (again in parallel) if substantive changes land.
 
-Wrap this stage in the **review loop** as well — same diminishing-returns judge, same 10-pass cap and two-clean-pass early exit (see Review Loop § Pass caps).
+At heavy, wrap this stage in the **review loop** — same diminishing-returns judge, 10-pass cap, and two-clean-pass early exit (see Review Loop § Pass caps). At light and medium there is no loop: one round, then advance or escalate.
 
-Only when both stages return clean does the chunk move to commit.
+Only when the stage(s) the current rung requires return clean does the chunk move to commit — Stage 1 alone at light, both stages at medium and heavy.
 
 ---
 
@@ -294,7 +304,7 @@ If the working tree has unrelated dirty files, list them and ask before staging 
 
 ---
 
-## The Review Loop (used in Steps 1, 2, 4 — FULL mode only; FAST mode uses the single passes defined in Pipeline Modes)
+## The Review Loop (used in Steps 1, 2, 4 — HEAVY RUNG ONLY; light and medium run the single passes defined in The Three Rungs)
 
 Each loop iteration:
 
@@ -303,17 +313,17 @@ Each loop iteration:
 3. **Print the one-line scorecard** (see below) — mandatory, every pass, no exceptions.
 4. Judge returns one of: `CONTINUE`, `STOP`, `SPLIT`.
 
-### Reviewer Selection (set by the Review-Tier Evaluator)
+### Reviewer Selection (per rung)
 
-The tier from the Review-Tier Evaluator selects the reviewer stack for every loop:
+The starting rung, and any rung it escalates to, selects the reviewer stack:
 
-| | Spec/plan loops | Code loop | Floor / exit |
+| Rung | Spec/plan | Code | Loop / exit |
 |---|---|---|---|
-| **LIGHT** | One `general-purpose` subagent pass per artifact — no codex. Clean (zero impact-YES B/S) → advance immediately. Findings → fix → one more subagent pass. | **Stage 1 only** (`superpowers:requesting-code-review`). No fresheyes unless a BLOCKER appears (→ escalate to STANDARD). | Single clean pass advances; judge from pass 3 as usual if findings keep coming. |
-| **STANDARD** | Pass 1 uses **fresheyes** (the one independent-model look per text artifact). Passes 2+ use fresh `general-purpose` subagents — no shared context, one lens per pass, rotating: *correctness/completeness*, *implementability*, *failure modes/rollback*. | Stage 1 + Stage 2 every pass, **in parallel** (see Step 4). | Two-clean-pass early exit; 3-pass floor otherwise. |
-| **HEAVY** | Passes 1 AND 2 use fresheyes; passes 3+ use lens-rotated subagents. | Stage 1 + Stage 2 every pass, in parallel. | **No early exit** — full 3-pass floor applies to every artifact. |
+| **light** | one `general-purpose` subagent pass. Clean → advance; surviving impact-YES B/S → escalate to medium. | Stage 1 only (`superpowers:requesting-code-review`) + verification gate. Surviving B/S → escalate to medium. | No loop — one pass, then advance or escalate. |
+| **medium** | one `superpowers:fresheyes` pass (Watchdog Protocol). Clean → advance; surviving B/S → escalate to heavy. | Stage 1 ∥ Stage 2 (fresheyes), one parallel round (see Step 4). Surviving B/S → escalate to heavy. | No loop — one independent round, then advance or escalate. |
+| **heavy** | passes 1 AND 2 use fresheyes; passes 3+ use lens-rotated `general-purpose` subagents — no shared context, one lens per pass, rotating: *correctness/completeness*, *implementability*, *failure modes/rollback*. | Stage 1 + Stage 2 every pass, in parallel (see Step 4). | 3-pass floor + judge from pass 3 + 10-pass cap. Two-clean-pass early exit, EXCEPT no early exit when floored at heavy by a hard trigger. |
 
-Rationale: subagent passes run in minutes; a codex fresheyes pass costs 5–15 min. The independence argument is strongest for code and for high-stakes artifacts — the tier spends codex passes exactly there and nowhere else.
+Rationale: subagent passes run in minutes; a fresheyes pass costs 5–15 min. Light spends none; medium spends exactly one; heavy spends them across the loop. The independence argument is strongest for code and high-stakes artifacts — the ladder buys codex passes there, and climbs to them only on evidence.
 
 ### The One-Line Scorecard (mandatory after every pass)
 
@@ -330,7 +340,7 @@ Where:
 - `F / P` = of the prior pass's BLOCKER+SUBSTANTIVE findings, how many are now resolved (`F`) out of the total that needed fixing (`P`). Pass 1 prints `fixed -/-`.
 - `velocity` arrow: `↓` if `current_count < prior_count`, `=` if equal, `↑` if growing. Show raw counts in parens.
 - `escalation` = `yes` if any current finding is more severe than the worst finding in the prior pass.
-- `judge` = the verdict returned by the diminishing-returns judge (`CONTINUE`, `STOP-IMPACT`, `STOP-CLASS`, `STOP-VELOCITY`, `SPLIT`). At passes 1–2 the judge does not run; print `judge: pre-floor` — or `judge: early-exit` on pass 2 when the two-clean-pass early exit fires (see Pass caps). In FAST mode print `judge: n/a-fast` (no judge runs; a BLOCKER in the pass promotes the run to FULL instead).
+- `judge` = the verdict returned by the diminishing-returns judge (`CONTINUE`, `STOP-IMPACT`, `STOP-CLASS`, `STOP-VELOCITY`, `SPLIT`). At passes 1–2 the judge does not run; print `judge: pre-floor` — or `judge: early-exit` on pass 2 when the two-clean-pass early exit fires (see Pass caps). At light print `judge: n/a-light` and at medium print `judge: n/a-medium` (no judge runs at those rungs; a surviving BLOCKER/SUBSTANTIVE escalates the rung instead). The judge runs only at heavy, from pass 3.
 
 **Example lines:**
 
@@ -347,6 +357,8 @@ The scorecard is the user-visible signal that the loop is converging. If three c
 
 ### Pass caps (hard ceilings)
 
+Pass caps, the floor, and early exit apply to the **heavy rung only** — light and medium do not loop.
+
 When `/do-it` is invoked, the cap is **10 passes** per artifact. The diminishing-returns judge is the primary brake; the cap is the backstop.
 
 - **Spec loop**: cap at **10 passes**.
@@ -355,7 +367,7 @@ When `/do-it` is invoked, the cap is **10 passes** per artifact. The diminishing
 
 Floor is **3 passes** before the judge is allowed to call STOP — three independent looks at an artifact is the minimum to trust "clean" — with exactly one exception:
 
-**Early exit (tier-dependent):** on **STANDARD**, if passes 1 AND 2 both return **zero impact-YES BLOCKER or SUBSTANTIVE findings**, advance immediately — the judge never runs; the pass-2 scorecard prints `judge: early-exit`. On **LIGHT**, a single clean pass advances (scorecard prints `judge: early-exit` at pass 1). On **HEAVY**, there is no early exit — the full 3-pass floor applies. This is the small-task relief valve — a 30-line plan for a 1-hour task should normally exit at its tier's clean-pass mark, not pay a floor designed for multi-system artifacts. COSMETIC findings do not block the exit (fix the trivial ones inline first).
+**Early exit (heavy only):** light and medium never loop, so early exit does not apply — they advance on a clean pass or escalate. On heavy, if passes 1 AND 2 both return zero impact-YES BLOCKER or SUBSTANTIVE findings, advance immediately — the judge never runs; the pass-2 scorecard prints `judge: early-exit`. EXCEPTION: when the run was floored at heavy by a hard trigger, there is no early exit — the full 3-pass floor always applies. COSMETIC findings do not block the exit (fix the trivial ones inline first).
 
 If pass 10 still finds blockers, the judge MUST emit `SPLIT`. The artifact is too large or too underspecified; iterate-to-exhaustion is forbidden.
 
