@@ -158,6 +158,7 @@ Review depth is a single dial with three rungs. Every run starts at its floor (l
 - Spec/plan: one subagent pass (correctness/completeness lens). Clean → advance.
 - Code: one Stage-1 pass (`superpowers:requesting-code-review`) + the verification gate. Clean → commit.
 - A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to medium. Light NEVER loops — it advances clean or escalates.
+- After push, the light-rung roborev backstop applies (Step 5 §8): an async, non-blocking independent-model review of the pushed commits — the one independent look light otherwise never gets. Light only; medium and heavy already bought theirs pre-commit.
 
 **medium** — one INDEPENDENT-model (`superpowers:fresheyes`) pass per artifact. No loop, no judge. Buys blind-spot coverage once (~5–15 min for the one codex pass, watchdog-capped).
 - Spec/plan: one fresheyes pass (Fresheyes Watchdog Protocol applies). Clean → advance.
@@ -254,7 +255,11 @@ Only when the stage(s) the current rung requires return clean does the chunk mov
 Launch with `run_in_background: true`; the script self-terminates at its 20-minute ceiling, so it can never hang the loop. It prints exactly one status line:
 
 - `FRESHEYES_DONE OUT=<file> LOG=<file>` — extract the review. Read `LOG` if `OUT` is empty: a late kill can leave `OUT` unwritten while the full review sits in the codex log (find the last "## Files Examined" through end).
-- `FRESHEYES_STALLED …` — retry ONCE from scratch. On a second stall, immediately dispatch a fresh `general-purpose` subagent reviewer (no shared context) — a first-class substitute for fresheyes that satisfies the independent-cross-validation requirement. Do NOT retry a third time, do NOT wait, do NOT spiral.
+- `FRESHEYES_STALLED …` — retry ONCE from scratch. On a second stall, fall back in this order:
+  1. **roborev (preferred — keeps the independent model):** if `roborev` is installed and the repo is initialized (`roborev status` succeeds), launch `roborev review --dirty --wait` with `run_in_background: true`. Same independent model as fresheyes, but through roborev's own daemon-managed harness with a hard job timeout — bounded, cannot hang the loop. When it returns, read findings via `roborev show --job <id> --json`, treat them exactly like fresheyes findings, then `roborev comment --job <id> "<summary>" && roborev close <id>` after applying them.
+  2. **Subagent (only if roborev is unavailable or its review errors):** dispatch a fresh `general-purpose` subagent reviewer (no shared context) — loses the independent model but keeps the independent context.
+
+  Either fallback satisfies the independent-cross-validation requirement. Do NOT retry fresheyes a third time, do NOT wait unbounded, do NOT spiral.
 
 The liveness rules and their rationale (log-vs-stdout buffering, verdict-before-flat-timer, mtime-marker log discovery, process-group-scoped teardown — never pattern-`pkill`) are encoded in the script and documented in its header comments. Tune timers only via the `FE_*` env vars; do not re-implement the loop inline.
 
@@ -299,6 +304,7 @@ Then:
 5. Commit using a descriptive message ending with the standard Co-Authored-By trailer.
 6. Push to the **current branch** of the cwd's repo. Never force-push. Never push to `master`/`main` if the current branch is master/main without explicit user confirmation in this session.
 7. Report the final commit SHA + remote URL. Do not open a PR (user can run `commit-commands:commit-push-pr` separately if they want one).
+8. **Light-rung roborev backstop (light rung ONLY — a run that escalated to medium or heavy counts as medium/heavy and skips this).** Light is the only rung that commits without any independent-model review; this closes that gap for ~zero pipeline cost. If the run finished at light and `roborev` is available in the repo (`roborev status` succeeds), enqueue an async review of the pushed commit(s) — `roborev review <sha>`, or `roborev review <first-sha> <last-sha>` for multi-commit runs — and END the pipeline immediately. Do NOT wait for the result, do NOT poll, do NOT fix findings in this run; the daemon reviews in the background and findings are handled by `/roborev-fix` in a later session. Record the enqueued job ID in the run manifest Notes and mention the backstop in the end-of-pipeline summary ("roborev backstop enqueued: job <id>"). If roborev is not available, skip silently — the backstop is opportunistic, never a wall.
 
 If the working tree has unrelated dirty files, list them and ask before staging — do not auto-stage other people's work.
 
