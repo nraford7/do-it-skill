@@ -45,7 +45,11 @@ TICK="${FE_TICK:-15}"
 
 OUT="$(mktemp "${TMPDIR:-/tmp}/fresheyes-out.XXXXXX")"
 MARK="$(mktemp "${TMPDIR:-/tmp}/fresheyes-mark.XXXXXX")"  # mtime marker: find THIS run's log
-LOGDIR="${TMPDIR:-/tmp}/fresheyes-logs"
+# fresheyes.sh defaults its log dir to /tmp/fresheyes-logs (FRESHEYES_GLOBAL_LOG_DIR),
+# NOT $TMPDIR/fresheyes-logs. On macOS TMPDIR is /var/folders/..., so watching
+# $TMPDIR here never finds the log and every healthy run false-stalls at LOG_WAIT.
+# Honor the same env overrides fresheyes.sh does, with its default as the fallback.
+LOGDIR="${FRESHEYES_LOG_DIR:-${FRESHEYES_GLOBAL_LOG_DIR:-/tmp/fresheyes-logs}}"
 LOG=""
 
 set -m

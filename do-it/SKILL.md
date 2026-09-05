@@ -252,6 +252,8 @@ Only when the stage(s) the current rung requires return clean does the chunk mov
 ~/.claude/skills/do-it/scripts/watchdog.sh <fresheyes.sh path> <scope args...>
 ```
 
+**If your fresheyes detaches into its own session** (current manual-mode default: it prints `FRESHPID=<pid>` and the launcher exits), pass `--foreground` in the scope args — a detached review escapes the watchdog's process group, so the watchdog sees the launcher exit and false-stalls every run, and its teardown cannot reach the real process.
+
 Launch with `run_in_background: true`; the script self-terminates at its 20-minute ceiling, so it can never hang the loop. It prints exactly one status line:
 
 - `FRESHEYES_DONE OUT=<file> LOG=<file>` — extract the review. Read `LOG` if `OUT` is empty: a late kill can leave `OUT` unwritten while the full review sits in the codex log (find the last "## Files Examined" through end).
