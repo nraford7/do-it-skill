@@ -14,8 +14,10 @@ Be literal with the rubric. Do not use judgment outside it. When torn,
 pick MEDIUM.
 
 STEP 1 - HARD TRIGGERS. If ANY apply, output Route: MEDIUM and stop:
-  - destructive or irreversible schema/data change (DROP, type narrowing,
-    backfill, rewrite, delete, or a mutation you cannot roll back)
+  - the change itself will mutate existing schema or data irreversibly
+    (a migration, DROP, type narrowing, backfill, or delete run against
+    real data). Building a tool whose features delete or overwrite files
+    is NOT this trigger: score that risk under FAILURE COST.
   - security-sensitive surface: auth, secrets, payments, PII, permissions
   - a contract/API used outside this repo changes shape
   - production config, deploy paths, or shared/prod state
@@ -34,8 +36,11 @@ STEP 2 - SCORE five dimensions, 0/1/2 each:
   FAILURE COST   0: cosmetic · 1: a broken feature, fixed by a retry or a patch
                  2: data loss, outage, money, or a security hole
 
-STEP 3 - CONSTRAINT. Does the instruction carry a constraint that must not
-be violated ("don't break X", "byte-identical", "keep the API stable")?
+STEP 3 - CONSTRAINT. A constraint is an instruction that EXISTING behavior
+must stay unchanged: existing output byte-identical, an existing API kept
+stable, "don't break X". Requirements that describe what NEW code must do
+(formats, flags, exit codes, error messages, allowed dependencies) are the
+task itself, not constraints. Is there a constraint?
 
 STEP 4 - ROUTE. Output Route: DIRECT only if ALL of these hold:
   - no hard trigger
