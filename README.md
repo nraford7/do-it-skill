@@ -6,28 +6,33 @@ A [Claude Code](https://claude.com/claude-code) skill for single-shot, end-to-en
 
 ```
 [0] Clarify (only if blocking)
-[1] Spec draft   → review loop (tiered: LIGHT / STANDARD / HEAVY)
-[2] Plan         → review loop
-[3] Execution    (no permission asks)
-[4] Post-build review
-[5] Verification gate → commit + push
+[R] Router (fresh subagent, fixed rubric) → DIRECT | MEDIUM
+      DIRECT: implement → tests → verify → commit + push (async independent review after push)
+              escalates to MEDIUM if the change spreads, tests fail twice, or a new risk appears
+      MEDIUM: [1] spec → [2] plan → [3] Agency execution → [4] one independent review per artifact
+              → [5] verification gate → commit + push
+              escalates to HEAVY (full review loop) only if a review leaves a serious finding unfixed
 ```
 
 Key ideas:
 
-- **Review-tier evaluator** — a rubric scores each task and picks how heavy the review stack should be (`FAST` mode skips the loops entirely for low-risk work).
-- **Diminishing-returns judge** — an independent judge decides CONTINUE / STOP / SPLIT after each review pass, so review effort stops when it stops paying.
-- **Mandatory artifacts** — every run leaves a spec, a plan, and a run manifest in git. No rationalized skips.
-- **Watchdog** — `scripts/watchdog.sh` supervises long external review runs (stall detection, hard ceiling), tunable via `FE_*` env vars.
+- **Size routing.** Small, contained, low-loss work goes straight to the model. Everything else gets spec, plan, execution and one independent-model review. The executor never picks its own route.
+- **Heavy only on evidence.** The full review loop (with a diminishing-returns judge) runs only when the medium pass leaves a serious problem unfixed.
+- **Mandatory artifacts on the pipeline route.** Spec, plan and run manifest in git. No rationalized skips.
+- **Watchdog.** `scripts/watchdog.sh` supervises long external review runs (stall detection, hard ceiling), tunable via `FE_*` env vars.
+
+**Why:** a 2026-09-30 eval of 45 blinded, judged builds found that current models meet a clear brief without any process; process buys robustness on unstated edge cases, and only where a miss is costly. A same-model review pass added almost nothing; one independent-model pass after a spec and plan carried the gain.
 
 ## Contents
 
 | Path | Purpose |
 |---|---|
-| `do-it/SKILL.md` | The skill itself — pipeline, modes, artifact rules |
-| `do-it/references/evaluator-rubric.md` | Review-tier scoring rubric |
-| `do-it/references/judge-prompt.md` | Diminishing-returns judge prompt |
+| `do-it/SKILL.md` | The skill: router, routes, escalation, artifact rules |
+| `do-it/references/router-rubric.md` | Router prompt (DIRECT vs MEDIUM) |
+| `do-it/references/judge-prompt.md` | Diminishing-returns judge prompt (heavy rung) |
 | `do-it/scripts/watchdog.sh` | Supervisor for long-running review subprocesses |
+| `tests/router/` | Router and escalation test scenarios and results |
+| `archive/do-it-v2026-08-25/` | Previous version (fixed light/medium/heavy dial) |
 
 ## Install
 
