@@ -1,45 +1,45 @@
 ---
-name: do-it-auto
-description: Use when the user says /do-it-auto, or asks to build something end-to-end with review depth sized to the task. Not for exploratory research or work the user expects to steer mid-flight; the run is single-shot and autonomous.
+name: do-it
+description: Use when the user says /do-it, "just build it", "do it end-to-end", or "run the full pipeline" on a non-trivial build task. Not for trivial single-file edits, exploratory research, or work the user expects to steer mid-flight — the pipeline is single-shot and autonomous.
 ---
 
-# /do-it-auto — Size-Routed Autonomous Build
+# /do-it — Autonomous Build Pipeline
 
-End-to-end execution. User gives an instruction; a router sends it down one of two routes. **DIRECT**: the build model does the work alone (implement, test, verify, commit, push). **MEDIUM**: the full pipeline (spec, plan, Agency execution, one independent-model review per artifact), climbing to **HEAVY** only if a medium review leaves a serious problem unfixed. No permission asks either way. The only place clarifying questions are allowed is **at the very start, before the spec is written**.
+End-to-end execution. User gives an instruction; this skill drives spec, plan, build, review, commit, push without further permission asks. The only place clarifying questions are allowed is **at the very start, before the spec is written**.
 
 The loop has one job: deliver working code that passes review without burning tokens on diminishing returns.
 
 ## When to Use
 
-- User says `/do-it-auto <instruction>`
-- User wants a build done end-to-end and wants the review depth matched to the task, not fixed
+- User says `/do-it <instruction>`
+- User says "just do it", "build it end-to-end", "run the full pipeline" on a non-trivial change
+- User wants the full Plan-with-superpowers / Execute-with-Agency / Review-with-superpowers workflow but does not want to be asked at every gate
 
-**Do NOT use** for exploratory research, or anything where the user expects to steer mid-flight. This skill assumes a single shot.
-
-**Basis:** the 2026-09-30 pipeline eval (`~/Projects/pipeline-eval/`). Every setup, including the raw model alone, passed 100% of hidden acceptance tests. Process bought robustness on unstated edge cases, and only where a missed edge case is costly. A same-model review pass (the old light rung) added almost nothing over the raw model; the independent-model pass in medium carried the gain.
+**Do NOT use** for trivial single-file edits, exploratory research, or anything where the user expects to steer mid-flight. This skill assumes a single shot.
 
 ## The Pipeline
 
 ```
 [0] Clarify (only if blocking)
       ↓
-[R] ROUTER (fresh subagent, fixed rubric) ─→ DIRECT | MEDIUM
-      ↓ DIRECT                                   ↓ MEDIUM
-    implement → tests → verify → commit/push    [1] Spec → one fresheyes pass
-    (+ async roborev backstop)                  [2] Plan → one fresheyes pass
-    escalates to MEDIUM on the triggers         [3] Agency execution
-    in The DIRECT Route                         [4] Stage 1 ∥ Stage 2 (fresheyes), one round
-                                                [5] Verification gate → Commit + push
-                                                 ↑ a surviving serious finding → HEAVY (loop)
+[1] Spec draft  ─→  START-FLOOR EVALUATOR (light | medium | heavy start)
+      ↓                          ↓ (floor = light unless risk floors it higher; climbs on evidence)
+    spec        ─→  review       ─→  (escalate? / split?) ─→  ✓     [light/medium: one pass, no loop]
+      ↓
+[2] Plan        ─→  review       ─→  (escalate? / split?) ─→  ✓     [light/medium: one pass, no loop]
+      ↓
+[3] Agency execution  (no permission asks — all rungs, unchanged)
+      ↓
+[4] Post-build review (heavy: Stage 1 ∥ Stage 2 loop · light: one Stage-1 pass · medium: one Stage 1 ∥ Stage 2 round)
+      ↓
+[5] Verification gate → Commit + push   (all rungs, unchanged)
 ```
 
-Only the **heavy** rung loops; it has a Claude diminishing-returns judge on top deciding CONTINUE / STOP / SPLIT after each pass. **medium** does not loop: one independent-model pass per artifact. See The Pipeline Rungs.
+Only the **heavy** rung loops; it has a Claude diminishing-returns judge on top deciding CONTINUE / STOP / SPLIT after each pass. **light** and **medium** do not loop — light is one same-model pass, medium is one independent-model pass. See The Three Rungs.
 
 ---
 
 ## Mandatory Artifacts (NO EXCEPTIONS)
-
-**Scope: every run on the MEDIUM or HEAVY route, including a DIRECT run that escalated.** A run that stays DIRECT needs only its run manifest (see The DIRECT Route). The router decides which route applies; the executor never does.
 
 By the time the pipeline reaches Step 5 (commit), ALL of the following files MUST exist on disk:
 
@@ -51,7 +51,7 @@ By the time the pipeline reaches Step 5 (commit), ALL of the following files MUS
 **These are non-negotiable. The skill explicitly forbids the following rationalizations:**
 
 - ❌ "The spec is detailed enough that the plan is implicit." → write the plan anyway, even if it's 30 lines.
-- ❌ "This task is small / well-spec'd already." → the router already decided. If it said MEDIUM, small tasks get short plans, not no plans.
+- ❌ "This task is small / well-spec'd already." → small tasks get short plans, not no plans.
 - ❌ "The parent spec already covers chunk X, so chunk X doesn't need its own plan." → write a chunk-specific plan that names files, line numbers, and acceptance criteria for that chunk.
 - ❌ "The subagent prompt IS effectively the plan." → no, the plan is a versioned, fresheyes-reviewed artifact in git. The dispatch prompt is ephemeral.
 - ❌ "Context budget is tight, so let's skip the plan step." → if the budget can't hold the cycle, save state and start fresh; don't skip.
@@ -79,8 +79,8 @@ Contents (keep it terse — this is a ledger, not prose):
 ```markdown
 # Run: <slug>
 Instruction: <the user's original /do-it instruction, verbatim>
-Stage: <clarify | routing | direct-build | direct-verify | spec | spec-review | plan | plan-review | executing | code-review:<chunk> | verifying | committing | done>
-Route: <DIRECT | MEDIUM | HEAVY> (router: <DIRECT | MEDIUM> — <hard-trigger | constraint | score rule>, BR REV NOV INT FC) <+ escalations with cause, if any>
+Stage: <clarify | spec | spec-review | plan | plan-review | executing | code-review:<chunk> | verifying | committing | done>
+Rung: <light | medium | heavy> (start-floor <light | medium | heavy>: <hard-trigger | FC=2 | constraint-lens | default>) <+ escalations with cause, if any>
 Spec: docs/superpowers/specs/...   Plan: docs/superpowers/plans/...
 Agency project: <id or —>
 
@@ -114,7 +114,7 @@ If nothing is blocking, skip this step and go straight to the spec.
 
 ## Step 1 — Spec
 
-The run manifest already exists from the Router step. Set `Stage: spec`.
+**First artifact of the run: create the run manifest** at `docs/superpowers/runs/YYYY-MM-DD-<slug>.md` (see Run Manifest section) with the verbatim instruction and `Stage: spec`.
 
 Use **`superpowers:brainstorming`** first if scope is fuzzy. Then author the spec yourself at:
 
@@ -124,73 +124,49 @@ docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md
 
 The spec must include: problem statement, success criteria (measurable), proposed approach, alternatives considered with why-not, blast radius / rollback plan, and any open questions.
 
-Then run the review for the current rung (see The Pipeline Rungs): one fresheyes pass at medium, or the spec review loop at heavy.
+**Once the spec draft exists, run the Start-Floor Evaluator (next section) — its verdict sets the run's starting rung (`light` unless risk floors it higher).** Then run the review for the current rung (see The Three Rungs) — one pass at light/medium, or the spec review loop at heavy.
 
 ---
 
-## Step R — Router (runs ONCE, before any spec)
+## Start-Floor Evaluator (runs ONCE, after the spec draft)
 
-**First artifact of the run: create the run manifest** at `docs/superpowers/runs/YYYY-MM-DD-<slug>.md` with the verbatim instruction and `Stage: routing`.
+Not every task earns an independent-model pass, let alone a full loop — but the decision to stay light must never belong to the executor, whose incentive is always to go light. So the STARTING rung is set by a **fresh subagent applying a fixed rubric**, recorded in the run manifest, and from there only ever climbs on evidence, never drops.
 
-The route is set by a **fresh subagent applying a fixed rubric**, never by the executor, whose incentive is always to go lighter. **Procedure:** look at the repo just long enough to name the files the change will likely touch and what the code is used for. Then dispatch one `general-purpose` subagent with the user's instruction, that short context, and the prompt in `references/router-rubric.md` (read that file; use the prompt verbatim). Record its verdict line in the manifest.
+**Procedure:** dispatch one `general-purpose` subagent with the user's instruction, the spec draft, and the prompt in `references/evaluator-rubric.md` (read that file; use the prompt verbatim).
 
-**If the router emits a `Lens:`** (constraint phrasing like "byte-identical" / "don't break X"), record it in the manifest and include it verbatim as a mandatory review focus in EVERY review pass's prompt, all stages. (A lens always routes MEDIUM.)
+**Record the verdict line in the run manifest** (`Rung: light (start-floor light: default, BR1 REV1 NOV0 INT1 FC1 = 4)`). The floor sets where the run STARTS; The Three Rungs defines what each rung runs; escalation (below) defines how it climbs.
 
-The user can override the route in the original instruction ("go direct on this" / "full pipeline" / "full review" for heavy). Record an override as the route cause.
+**If the evaluator emits a `Lens:`** (constraint phrasing like "byte-identical" / "don't break X"), record it in the manifest and include it verbatim as a mandatory review focus in EVERY review pass's prompt, every rung, all stages. The lens is how constraints get enforced at any rung.
 
----
+**Escalation (one-way ratchet, mechanical):** the rung climbs exactly one step, for all remaining stages, whenever any of these occur mid-run:
+- a review pass leaves an impact-YES BLOCKER or SUBSTANTIVE finding unfixed after that rung's pass(es) — light→medium, medium→heavy;
+- a judge verdict of `SPLIT` (heavy only) → Splitting;
+- a hard trigger surfaces that the spec didn't reveal → jump straight to heavy;
+- an Agency task fails its evaluator twice → re-plan (Step 3) and bump the rung one step.
 
-## The DIRECT Route
-
-The build model works alone, the way a strong engineer handles a small, contained change.
-
-1. Set `Stage: direct-build`. Implement the change.
-2. Write tests for the tricky parts. Follow existing test conventions.
-3. Set `Stage: direct-verify`. Run the project's standard verification (see Pre-Commit Artifact Verification for what counts). Fix failures.
-4. Commit and push per Step 5 (skip the spec/plan checks in Pre-Commit Artifact Verification; the manifest check still applies).
-5. Enqueue the roborev backstop (Step 5 §8).
-
-**Escalate DIRECT → MEDIUM** (one-way, record the cause in the manifest) the moment ANY of these is true:
-- the change turns out to touch more than one module, or to change an interface other code relies on;
-- verification still fails after **2** fix attempts;
-- a hard trigger, a FAILURE COST = 2 risk, or a must-not-break constraint surfaces that the router did not see.
-
-On escalation: keep the code written so far as the starting point. Write the spec and plan for the whole change (the existing code is input, not a substitute), then continue at Step 1 review on the MEDIUM route. Every Mandatory Artifact now applies.
-
-| Rationalization in a DIRECT run | Reality |
-|---|---|
-| "It touches a second module, but only a little." | Two modules = escalate. The rule is the count, not the size. |
-| "Third fix attempt will surely work." | Two failed attempts = escalate. The pipeline exists for exactly this. |
-| "I found an auth/data-loss angle, but the router said DIRECT." | The router saw less than you now see. Escalate. |
-| "Escalating now wastes the work done." | Nothing is wasted: the code carries into MEDIUM as input. |
-
-**Never go the other way.** A MEDIUM or HEAVY run never drops to DIRECT, for any reason.
+Escalation reuses the artifacts already on disk, so a step up costs only the additional passes, never a restart. The rung NEVER drops, and the executor may not overrule it downward for any reason — that is the same skip-temptation the Mandatory Artifacts rules exist to block. Escalation is driven by the finding severities the scorecard already prints, NOT by executor judgment. Log every escalation + cause in the manifest. The user can override in either direction in the original instruction ("go light on this" / "full review").
 
 ---
 
-## Escalation (MEDIUM → HEAVY, one-way, mechanical)
+## The Three Rungs (set by the Start-Floor Evaluator, climbed on evidence)
 
-The rung climbs to heavy, for all remaining stages, whenever any of these occur mid-run:
-- a medium review pass leaves an impact-YES BLOCKER or SUBSTANTIVE finding unfixed after that pass;
-- an Agency task fails its evaluator twice → re-plan (Step 3) and climb to heavy.
+Review depth is a single dial with three rungs. Every run starts at its floor (light unless the evaluator floored it higher) and climbs one rung whenever a review pass leaves a real problem unfixed. It never climbs down. **All Mandatory Artifacts apply at every rung** — the rung trims passes, never discipline. The evaluator sets the starting rung: ordinary work starts at light; a "don't break X"/"byte-identical" constraint or FAILURE COST = 2 (data loss, outage, or money) floors the start at medium; a hard trigger (security, destructive migration, external contract change, prod config, or an explicit request for thoroughness) floors it at heavy.
 
-Escalation reuses the artifacts already on disk, so a step up costs only the additional passes, never a restart. The rung NEVER drops, and the executor may not overrule it downward for any reason. Escalation is driven by the finding severities the scorecard already prints, NOT by executor judgment. Log every escalation + cause in the manifest.
+**Basis:** the 2026-07-03 quadrant experiment (`~/Experiments/quadrant-test-2026-07-03/REPORT.md`) — on a moderate task, a single-pass pipeline with Agency execution scored 93/120 (blinded judges) vs the full loop's 98/120, at ~21% of the cost and ~20% of the wall clock, with identical held-out conformance (26/26 both). The loop's premium is real but narrow: it buys defect classes that only matter when silent wrongness is expensive. Light spends nothing on it; heavy spends it in full; medium buys the one thing that closes most of the gap — a single independent look.
 
-**Hard triggers start at MEDIUM, not heavy** (NR's decision, 2026-09-30). They reach heavy only through the escalation rule above. When a run with a recorded hard trigger does reach heavy, it gets NO early exit (see Pass caps).
+**light** — one same-model (`general-purpose` subagent) pass per artifact. No independent model, no loop, no judge. Fast (minutes). The default start.
+- Spec/plan: one subagent pass (correctness/completeness lens). Clean → advance.
+- Code: one Stage-1 pass (`superpowers:requesting-code-review`) + the verification gate. Clean → commit.
+- A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to medium. Light NEVER loops — it advances clean or escalates.
+- After push, the light-rung roborev backstop applies (Step 5 §8): an async, non-blocking independent-model review of the pushed commits — the one independent look light otherwise never gets. Light only; medium and heavy already bought theirs pre-commit.
 
----
-
-## The Pipeline Rungs (MEDIUM route; HEAVY only by escalation)
-
-**All Mandatory Artifacts apply at both rungs**; the rung trims passes, never discipline.
-
-**medium**: one INDEPENDENT-model (`superpowers:fresheyes`) pass per artifact. No loop, no judge. Buys blind-spot coverage once (~5–15 min for the one codex pass, watchdog-capped).
+**medium** — one INDEPENDENT-model (`superpowers:fresheyes`) pass per artifact. No loop, no judge. Buys blind-spot coverage once (~5–15 min for the one codex pass, watchdog-capped).
 - Spec/plan: one fresheyes pass (Fresheyes Watchdog Protocol applies). Clean → advance.
 - Code: Stage 1 ∥ Stage 2 (fresheyes), ONE round in parallel (see Step 4). Clean → commit.
-- Scorecard prints for the pass (judge column `n/a-medium`). A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to heavy. Medium NEVER loops: one independent look, then advance or escalate.
+- Scorecard prints for the pass (judge column `n/a-medium`). A surviving impact-YES BLOCKER or SUBSTANTIVE finding escalates to heavy. Medium NEVER loops — one independent look, then advance or escalate.
 
-**heavy**: the full review loop: fresheyes on passes 1–2, lens-rotated subagents 3+, 3-pass floor, diminishing-returns judge from pass 3, 10-pass cap, Stage 1 ∥ Stage 2 every code pass (see The Review Loop, Pass caps, and the Diminishing-Returns Judge below).
-- Two-clean-pass early exit applies, UNLESS the run has a recorded hard trigger, in which case there is NO early exit and the full 3-pass floor always runs.
+**heavy** — the full review loop: fresheyes on passes 1–2, lens-rotated subagents 3+, 3-pass floor, diminishing-returns judge from pass 3, 10-pass cap, Stage 1 ∥ Stage 2 every code pass (see The Review Loop, Pass caps, and the Diminishing-Returns Judge below).
+- Two-clean-pass early exit applies — UNLESS the run was floored at heavy by a hard trigger (security, destructive migration, explicit thoroughness), in which case there is NO early exit and the full 3-pass floor always runs.
 - A judge `SPLIT` goes to Splitting.
 
 The Review Loop, Pass caps, and Diminishing-Returns Judge sections below apply to the **heavy rung only**.
@@ -218,13 +194,13 @@ For SMALL tasks (single-file edit, brief investigation, parameter change): write
 
 For LARGE tasks (multi-system, schema migration, refactor): write a full plan — typically 200-1000 lines — with chunked structure, dependency ordering, per-chunk acceptance criteria.
 
-Then run the plan review for the current rung (see The Pipeline Rungs): one fresheyes pass at medium, or the plan review loop at heavy (minimum 2 passes; floor, early exit, and reviewer selection per Review Loop § Pass caps and § Reviewer Selection).
+Then run the plan review for the current rung (see The Three Rungs): one subagent pass at light, one fresheyes pass at medium, or the plan review loop at heavy (minimum 2 passes; floor, early exit, and reviewer selection per Review Loop § Pass caps and § Reviewer Selection).
 
 **Self-check before advancing to Step 3:**
 - [ ] Plan file exists at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`
-- [ ] Plan has gone through the review its rung requires (medium: one fresheyes pass; heavy: see Reviewer Selection)
-- [ ] heavy only: diminishing-returns judge emitted STOP at pass 3+ OR the two-clean-pass early exit fired (never when a hard trigger is recorded)
-- [ ] Scorecard line was printed for every plan-review pass (both rungs)
+- [ ] Plan has gone through the review its rung requires (light: one subagent pass, findings fixed; medium: one fresheyes pass; heavy: see Reviewer Selection)
+- [ ] heavy only: diminishing-returns judge emitted STOP at pass 3+ OR the two-clean-pass early exit fired (never on hard-trigger-floored heavy)
+- [ ] Scorecard line was printed for every plan-review pass (all rungs)
 - [ ] Run manifest updated (stage = plan-approved)
 
 If any checkbox is unchecked, DO NOT advance. Either complete it or surface to user.
@@ -244,7 +220,7 @@ mcp__agency__agency_submit_evaluation
 
 Do not ask the user for permission to start, to assign tasks, or to mark tasks complete. The plan was approved; execute it.
 
-If a task fails the Agency evaluator twice with the same root cause, **stop, re-plan, and climb to heavy** rather than thrashing. Re-planning is a **lightweight amendment, not a full Step 2 re-entry**: amend the affected plan section in place, run ONE reviewer pass on the amended delta (a `general-purpose` subagent with the *implementability* lens — no 3-pass floor, no fresheyes required), record the failure + amendment in the run manifest, and resume execution. Full re-entry into Step 2 (with its review loop) is required only if the amendment changes chunk boundaries or cross-chunk contracts. Mention the re-plan in the end-of-pipeline summary.
+If a task fails the Agency evaluator twice with the same root cause, **stop and re-plan** rather than thrashing. Re-planning is a **lightweight amendment, not a full Step 2 re-entry**: amend the affected plan section in place, run ONE reviewer pass on the amended delta (a `general-purpose` subagent with the *implementability* lens — no 3-pass floor, no fresheyes required), record the failure + amendment in the run manifest, and resume execution. Full re-entry into Step 2 (with its review loop) is required only if the amendment changes chunk boundaries or cross-chunk contracts. Mention the re-plan in the end-of-pipeline summary.
 
 ---
 
@@ -252,7 +228,7 @@ If a task fails the Agency evaluator twice with the same root cause, **stop, re-
 
 Review runs at **chunk boundaries, not per task** — that is this skill's review policy. After all tasks in a chunk are Agency-evaluator-clean, run the **two-stage review on the chunk's combined diff**.
 
-**At medium: one Stage 1 ∥ Stage 2 round in parallel, then commit if clean (a surviving BLOCKER/SUBSTANTIVE escalates to heavy).** At heavy:
+**At light: one Stage-1 pass + verification gate, then commit (a surviving BLOCKER/SUBSTANTIVE escalates to medium). At medium: one Stage 1 ∥ Stage 2 round in parallel, then commit if clean (a surviving BLOCKER/SUBSTANTIVE escalates to heavy).** At heavy:
 
 **Stages 1 and 2 are independent by design (no shared context) — launch them IN PARALLEL, not sequentially.** Fresheyes takes 5–15 min; Stage 1 rides inside that window for free. Dispatch the Stage 1 subagent and the watchdogged fresheyes in the same round, then collect both.
 
@@ -260,9 +236,9 @@ Review runs at **chunk boundaries, not per task** — that is this skill's revie
 2. **Stage 2** — `superpowers:fresheyes` for independent cross-validation (different model, no shared context). Model and effort come from `settings.json` env (`FRESHEYES_MODEL`, `FRESHEYES_REASONING`) — never pass or hardcode a model in the call. **Run it through `scripts/watchdog.sh` per the Fresheyes Watchdog Protocol below — never a bare call that could hang.** If fresheyes stalls twice, the protocol's fallback applies: a fresh `general-purpose` subagent with no shared context, or `code-review:code-review` on PRs.
 3. Once both stages return, apply the combined findings via `superpowers:receiving-code-review` (technical rigor, no performative agreement). Re-run both stages (again in parallel) if substantive changes land.
 
-At heavy, wrap this stage in the **review loop**: same diminishing-returns judge, 10-pass cap, and two-clean-pass early exit (see Review Loop § Pass caps). At medium there is no loop: one round, then advance or escalate.
+At heavy, wrap this stage in the **review loop** — same diminishing-returns judge, 10-pass cap, and two-clean-pass early exit (see Review Loop § Pass caps). At light and medium there is no loop: one round, then advance or escalate.
 
-Only when both stages return clean does the chunk move to commit.
+Only when the stage(s) the current rung requires return clean does the chunk move to commit — Stage 1 alone at light, both stages at medium and heavy.
 
 ---
 
@@ -273,7 +249,7 @@ Only when both stages return clean does the chunk move to commit.
 **Never invoke `fresheyes.sh` directly and never hand-roll a waiter. Always run it through the bundled watchdog:**
 
 ```bash
-~/.claude/skills/do-it-auto/scripts/watchdog.sh <fresheyes.sh path> <scope args...>
+~/.claude/skills/do-it/scripts/watchdog.sh <fresheyes.sh path> <scope args...>
 ```
 
 Launch with `run_in_background: true`; the script self-terminates at its 20-minute ceiling, so it can never hang the loop. It prints exactly one status line:
@@ -303,7 +279,7 @@ test -f docs/superpowers/runs/YYYY-MM-DD-<slug>.md && echo "manifest ✓" || ech
 
 **Then run the verification gate:** execute the project's standard verification once on the combined result — test suite, lint, build, whatever the project defines (check the plan's verification commands, CLAUDE.md, or the obvious `package.json`/`Makefile`/CI config). Agency evaluators checked per-task; this is the only whole-result check before push. A failure blocks the commit: fix it, re-run the failing verification, and if the fix was substantive run one more Stage-1 review pass on the fix delta. If the project has no runnable verification, note that in the run manifest and proceed.
 
-All three files must exist on the MEDIUM/HEAVY route; a run that stayed DIRECT needs only the manifest. If a required file is missing:
+All three files must exist. If any is missing:
 - **STOP.**
 - **Do NOT commit.**
 - **Surface the missing artifact to the user.** Acceptable surfacing: "I notice the [spec|plan] file is missing because I [skipped step X | reason]. Per the skill's Mandatory Artifacts rule I cannot commit without it. Want me to (a) write the missing file now, (b) abort the run, (c) explicit override (you take responsibility for the skip)?"
@@ -328,13 +304,13 @@ Then:
 5. Commit using a descriptive message ending with the standard Co-Authored-By trailer.
 6. Push to the **current branch** of the cwd's repo. Never force-push. Never push to `master`/`main` if the current branch is master/main without explicit user confirmation in this session.
 7. Report the final commit SHA + remote URL. Do not open a PR (user can run `commit-commands:commit-push-pr` separately if they want one).
-8. **DIRECT-route roborev backstop (DIRECT ONLY; a run that escalated counts as MEDIUM/HEAVY and skips this).** DIRECT is the only route that commits without any independent-model review; this closes that gap for ~zero pipeline cost. If the run finished DIRECT and `roborev` is available in the repo (`roborev status` succeeds), enqueue an async review of the pushed commit(s) — `roborev review <sha>`, or `roborev review <first-sha> <last-sha>` for multi-commit runs — and END the pipeline immediately. Do NOT wait for the result, do NOT poll, do NOT fix findings in this run; the daemon reviews in the background and findings are handled by `/roborev-fix` in a later session. Record the enqueued job ID in the run manifest Notes and mention the backstop in the end-of-pipeline summary ("roborev backstop enqueued: job <id>"). If roborev is not available, skip silently — the backstop is opportunistic, never a wall.
+8. **Light-rung roborev backstop (light rung ONLY — a run that escalated to medium or heavy counts as medium/heavy and skips this).** Light is the only rung that commits without any independent-model review; this closes that gap for ~zero pipeline cost. If the run finished at light and `roborev` is available in the repo (`roborev status` succeeds), enqueue an async review of the pushed commit(s) — `roborev review <sha>`, or `roborev review <first-sha> <last-sha>` for multi-commit runs — and END the pipeline immediately. Do NOT wait for the result, do NOT poll, do NOT fix findings in this run; the daemon reviews in the background and findings are handled by `/roborev-fix` in a later session. Record the enqueued job ID in the run manifest Notes and mention the backstop in the end-of-pipeline summary ("roborev backstop enqueued: job <id>"). If roborev is not available, skip silently — the backstop is opportunistic, never a wall.
 
 If the working tree has unrelated dirty files, list them and ask before staging — do not auto-stage other people's work.
 
 ---
 
-## The Review Loop (used in Steps 1, 2, 4; HEAVY RUNG ONLY; medium runs the single passes defined in The Pipeline Rungs)
+## The Review Loop (used in Steps 1, 2, 4 — HEAVY RUNG ONLY; light and medium run the single passes defined in The Three Rungs)
 
 Each loop iteration:
 
@@ -349,10 +325,11 @@ The starting rung, and any rung it escalates to, selects the reviewer stack:
 
 | Rung | Spec/plan | Code | Loop / exit |
 |---|---|---|---|
+| **light** | one `general-purpose` subagent pass. Clean → advance; surviving impact-YES B/S → escalate to medium. | Stage 1 only (`superpowers:requesting-code-review`) + verification gate. Surviving B/S → escalate to medium. | No loop — one pass, then advance or escalate. |
 | **medium** | one `superpowers:fresheyes` pass (Watchdog Protocol). Clean → advance; surviving B/S → escalate to heavy. | Stage 1 ∥ Stage 2 (fresheyes), one parallel round (see Step 4). Surviving B/S → escalate to heavy. | No loop — one independent round, then advance or escalate. |
-| **heavy** | passes 1 AND 2 use fresheyes; passes 3+ use lens-rotated `general-purpose` subagents — no shared context, one lens per pass, rotating: *correctness/completeness*, *implementability*, *failure modes/rollback*. | Stage 1 + Stage 2 every pass, in parallel (see Step 4). | 3-pass floor + judge from pass 3 + 10-pass cap. Two-clean-pass early exit, EXCEPT no early exit when a hard trigger is recorded. |
+| **heavy** | passes 1 AND 2 use fresheyes; passes 3+ use lens-rotated `general-purpose` subagents — no shared context, one lens per pass, rotating: *correctness/completeness*, *implementability*, *failure modes/rollback*. | Stage 1 + Stage 2 every pass, in parallel (see Step 4). | 3-pass floor + judge from pass 3 + 10-pass cap. Two-clean-pass early exit, EXCEPT no early exit when floored at heavy by a hard trigger. |
 
-Rationale: subagent passes run in minutes; a fresheyes pass costs 5–15 min. DIRECT spends none before push; medium spends exactly one per artifact; heavy spends them across the loop. The independence argument is strongest for code and high-stakes artifacts — the ladder buys codex passes there, and climbs to them only on evidence.
+Rationale: subagent passes run in minutes; a fresheyes pass costs 5–15 min. Light spends none; medium spends exactly one; heavy spends them across the loop. The independence argument is strongest for code and high-stakes artifacts — the ladder buys codex passes there, and climbs to them only on evidence.
 
 ### The One-Line Scorecard (mandatory after every pass)
 
@@ -369,7 +346,7 @@ Where:
 - `F / P` = of the prior pass's BLOCKER+SUBSTANTIVE findings, how many are now resolved (`F`) out of the total that needed fixing (`P`). Pass 1 prints `fixed -/-`.
 - `velocity` arrow: `↓` if `current_count < prior_count`, `=` if equal, `↑` if growing. Show raw counts in parens.
 - `escalation` = `yes` if any current finding is more severe than the worst finding in the prior pass.
-- `judge` = the verdict returned by the diminishing-returns judge (`CONTINUE`, `STOP-IMPACT`, `STOP-CLASS`, `STOP-VELOCITY`, `SPLIT`). At passes 1–2 the judge does not run; print `judge: pre-floor` — or `judge: early-exit` on pass 2 when the two-clean-pass early exit fires (see Pass caps). At medium print `judge: n/a-medium` (no judge runs there; a surviving BLOCKER/SUBSTANTIVE escalates the rung instead). The judge runs only at heavy, from pass 3.
+- `judge` = the verdict returned by the diminishing-returns judge (`CONTINUE`, `STOP-IMPACT`, `STOP-CLASS`, `STOP-VELOCITY`, `SPLIT`). At passes 1–2 the judge does not run; print `judge: pre-floor` — or `judge: early-exit` on pass 2 when the two-clean-pass early exit fires (see Pass caps). At light print `judge: n/a-light` and at medium print `judge: n/a-medium` (no judge runs at those rungs; a surviving BLOCKER/SUBSTANTIVE escalates the rung instead). The judge runs only at heavy, from pass 3.
 
 **Example lines:**
 
@@ -386,9 +363,9 @@ The scorecard is the user-visible signal that the loop is converging. If three c
 
 ### Pass caps (hard ceilings)
 
-Pass caps, the floor, and early exit apply to the **heavy rung only**; medium does not loop.
+Pass caps, the floor, and early exit apply to the **heavy rung only** — light and medium do not loop.
 
-On the heavy rung, the cap is **10 passes** per artifact. The diminishing-returns judge is the primary brake; the cap is the backstop.
+When `/do-it` is invoked, the cap is **10 passes** per artifact. The diminishing-returns judge is the primary brake; the cap is the backstop.
 
 - **Spec loop**: cap at **10 passes**.
 - **Plan loop**: cap at **10 passes**.
@@ -396,11 +373,11 @@ On the heavy rung, the cap is **10 passes** per artifact. The diminishing-return
 
 Floor is **3 passes** before the judge is allowed to call STOP — three independent looks at an artifact is the minimum to trust "clean" — with exactly one exception:
 
-**Early exit (heavy only):** medium never loops, so early exit does not apply there. On heavy, if passes 1 AND 2 both return zero impact-YES BLOCKER or SUBSTANTIVE findings, advance immediately; the judge never runs; the pass-2 scorecard prints `judge: early-exit`. EXCEPTION: when the run has a recorded hard trigger, there is no early exit; the full 3-pass floor always applies. COSMETIC findings do not block the exit (fix the trivial ones inline first).
+**Early exit (heavy only):** light and medium never loop, so early exit does not apply — they advance on a clean pass or escalate. On heavy, if passes 1 AND 2 both return zero impact-YES BLOCKER or SUBSTANTIVE findings, advance immediately — the judge never runs; the pass-2 scorecard prints `judge: early-exit`. EXCEPTION: when the run was floored at heavy by a hard trigger, there is no early exit — the full 3-pass floor always applies. COSMETIC findings do not block the exit (fix the trivial ones inline first).
 
 If pass 10 still finds blockers, the judge MUST emit `SPLIT`. The artifact is too large or too underspecified; iterate-to-exhaustion is forbidden.
 
-> The judge is expected to call STOP well before pass 10 on most runs. The 10-pass ceiling exists for genuinely hard artifacts (multi-system specs, large refactor plans, security-sensitive code) where escalation has already shown that deeper review is needed. If the user explicitly says "stay strict, cap at 5 on this one," honor that override.
+> The judge is expected to call STOP well before pass 10 on most runs. The 10-pass ceiling exists for genuinely hard artifacts (multi-system specs, large refactor plans, security-sensitive code) where the user has already accepted the token cost of deeper review by invoking `/do-it`. If the user explicitly says "stay strict, cap at 5 on this one," honor that override.
 
 ### The Diminishing-Returns Judge
 
